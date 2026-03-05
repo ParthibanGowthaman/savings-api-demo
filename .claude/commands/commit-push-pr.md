@@ -98,3 +98,4 @@ Stage all changes, commit, push to a feature branch, and open a GitHub PR.
 - Ask me before proceeding if anything looks unexpected
 - The `GH_TOKEN` env var must be exported in EVERY bash call that uses `gh` (env vars don't persist between tool calls)
 - The GitHub CLI path (`/c/Program Files/GitHub CLI`) must also be added to PATH in every `gh` call
+- Use `git -C <path>` instead of `cd <path> && git` to avoid compound command permission issues (e.g., `git -C /c/Users/parthiban.gowthaman/savings-api-demo status`)
