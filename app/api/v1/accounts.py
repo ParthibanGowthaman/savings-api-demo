@@ -22,6 +22,12 @@ async def _run_sync(func, *args):
     return await loop.run_in_executor(None, partial(func, *args))
 
 
+@router.get("/", response_model=list[AccountResponse])
+async def list_accounts() -> list[AccountResponse]:
+    accounts = await _run_sync(account_service.list_accounts)
+    return [AccountResponse(**a) for a in accounts]
+
+
 @router.post("/", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
 async def create_account(payload: AccountCreate) -> AccountResponse:
     account = await _run_sync(

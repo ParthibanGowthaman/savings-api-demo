@@ -39,6 +39,11 @@ def create_account(owner_name: str, initial_deposit: Decimal) -> dict:
     return account
 
 
+def list_accounts() -> list[dict]:
+    with _lock:
+        return list(_accounts.values())
+
+
 def get_account(account_id: UUID) -> dict:
     with _lock:
         return _get_account(account_id)

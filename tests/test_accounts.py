@@ -57,6 +57,29 @@ async def test_create_account_with_initial_deposit(client: AsyncClient) -> None:
     assert Decimal(data["balance"]) == Decimal("250.75")
 
 
+# ---------- List Accounts ----------
+
+
+async def test_list_accounts_empty(client: AsyncClient) -> None:
+    """Listing accounts when none exist should return an empty list."""
+    resp = await client.get(f"{BASE_URL}/")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_list_accounts_multiple(client: AsyncClient) -> None:
+    """Listing accounts should return all created accounts."""
+    await _create_account(client, owner_name="Alice", initial_deposit="100")
+    await _create_account(client, owner_name="Bob", initial_deposit="200")
+
+    resp = await client.get(f"{BASE_URL}/")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    names = {a["owner_name"] for a in data}
+    assert names == {"Alice", "Bob"}
+
+
 # ---------- Get Account ----------
 
 
