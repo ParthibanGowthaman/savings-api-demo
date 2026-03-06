@@ -1,5 +1,11 @@
 {
   "permissions": {
+    "deny": [
+      "Read(.env)",
+      "Grep(path:.env)",
+      "Bash(cat .env*)",
+      "Bash(*cat .env*)"
+    ],
     "allow": [
       "Bash(pip install:*)",
       "Bash(git status)",

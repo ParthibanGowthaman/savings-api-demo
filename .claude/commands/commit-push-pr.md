@@ -4,15 +4,9 @@ Stage all changes, commit, push to a feature branch, and open a GitHub PR.
 
 ### Step 1: Authenticate with GitHub
 
-1. Read the `.env` file in the project root to get the `GITHUB_TOKEN` value.
-2. Export it as `GH_TOKEN` so the GitHub CLI can authenticate:
+1. NEVER hardcode or display the token in commands. Always source it from `.env` inline:
    ```bash
-   export GH_TOKEN="<token from .env>"
-   ```
-3. Verify authentication works:
-   ```bash
-   export PATH="/c/Program Files/GitHub CLI:$PATH"
-   gh auth status
+   export GH_TOKEN=$(grep GITHUB_TOKEN .env | cut -d'=' -f2) && export PATH="/c/Program Files/GitHub CLI:$PATH" && gh auth status
    ```
 
 ### Step 2: Review current changes
@@ -69,11 +63,9 @@ Stage all changes, commit, push to a feature branch, and open a GitHub PR.
 
 ### Step 7: Open a Pull Request
 
-1. Create the PR using `gh pr create` with `GH_TOKEN` and the GitHub CLI path exported:
+1. Create the PR using `gh pr create`, sourcing the token inline from `.env`:
    ```bash
-   export GH_TOKEN="<token from .env>"
-   export PATH="/c/Program Files/GitHub CLI:$PATH"
-   gh pr create --base main --title "Short descriptive title" --body "$(cat <<'EOF'
+   export GH_TOKEN=$(grep GITHUB_TOKEN .env | cut -d'=' -f2) && export PATH="/c/Program Files/GitHub CLI:$PATH" && gh pr create --base main --title "Short descriptive title" --body "$(cat <<'EOF'
    ## Summary
 
    - Bullet point describing what changed and why
@@ -96,6 +88,7 @@ Stage all changes, commit, push to a feature branch, and open a GitHub PR.
 - NEVER skip pre-commit hooks (no --no-verify)
 - If a hook fails, fix the issue and retry — do not bypass it
 - Ask me before proceeding if anything looks unexpected
+- NEVER hardcode or display the GitHub token in commands. Always source it inline: `export GH_TOKEN=$(grep GITHUB_TOKEN .env | cut -d'=' -f2)`
+- NEVER use the Read tool to read `.env` — source it in bash only so the token stays hidden
 - The `GH_TOKEN` env var must be exported in EVERY bash call that uses `gh` (env vars don't persist between tool calls)
 - The GitHub CLI path (`/c/Program Files/GitHub CLI`) must also be added to PATH in every `gh` call
-- Use `git -C <path>` instead of `cd <path> && git` to avoid compound command permission issues (e.g., `git -C /c/Users/parthiban.gowthaman/savings-api-demo status`)
