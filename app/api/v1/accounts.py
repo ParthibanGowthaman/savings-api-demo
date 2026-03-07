@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.schemas.account import (
     AccountCreate,
     AccountResponse,
+    AccountUpdate,
     InterestRequest,
     InterestResponse,
     TransactionHistoryEntry,
@@ -34,8 +35,17 @@ async def list_accounts() -> list[AccountResponse]:
 @router.post("/", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
 async def create_account(payload: AccountCreate) -> AccountResponse:
     account = await _run_sync(
-        account_service.create_account, payload.owner_name, payload.initial_deposit
+        account_service.create_account, payload.owner_name, payload.initial_deposit, payload.notes
     )
+    return AccountResponse(**account)
+
+
+@router.patch("/{account_id}", response_model=AccountResponse)
+async def update_account(account_id: UUID, payload: AccountUpdate) -> AccountResponse:
+    try:
+        account = await _run_sync(account_service.update_account, account_id, payload.notes)
+    except AccountNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return AccountResponse(**account)
 
 

@@ -3,11 +3,9 @@
 You are a senior engineering reviewer at a regulated bank.
 Review the changes in this PR before a human approves it.
 
-## Step 1 — Find the latest build report and get the diff
+## Step 1 — Get the diff
 
 ```bash
-REPORT=$(ls -t reports/builds/*.md 2>/dev/null | head -1)
-echo "Appending review to: $REPORT"
 git diff main...HEAD
 git log main...HEAD --oneline
 ```
@@ -41,34 +39,7 @@ git log main...HEAD --oneline
 - Do the tests cover failure cases, not just happy path?
 - Would these tests catch a regression?
 
-## Step 3 — Log the review
-
-Append findings to the build report:
-```bash
-cat >> $REPORT << REVIEW
-
-## Code Review
-- **Reviewed at:** $(date '+%Y-%m-%d %H:%M:%S')
-- **Reviewer:** Claude (automated first pass)
-
-### Findings
-
-🔴 HIGH — must fix before merge
-<issues or "None">
-
-🟡 MEDIUM — should fix
-<issues or "None">
-
-🟢 LOW — nice to have
-<issues or "None">
-
-### Verdict
-<APPROVED or NEEDS CHANGES>
-
-REVIEW
-```
-
-## Step 4 — Format your review for terminal
+## Step 3 — Format your review for terminal
 
 ```
 🔴 HIGH — must fix before merge

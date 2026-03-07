@@ -8,12 +8,18 @@ from pydantic import BaseModel, Field
 class AccountCreate(BaseModel):
     owner_name: str = Field(..., min_length=1, max_length=100)
     initial_deposit: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class AccountUpdate(BaseModel):
+    notes: str | None = Field(default=None, max_length=500)
 
 
 class AccountResponse(BaseModel):
     id: UUID
     owner_name: str
     balance: Decimal
+    notes: str | None
     created_at: datetime
 
 

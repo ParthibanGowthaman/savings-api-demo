@@ -27,18 +27,26 @@ def _get_account(account_id: UUID) -> dict:
     return account
 
 
-def create_account(owner_name: str, initial_deposit: Decimal) -> dict:
+def create_account(owner_name: str, initial_deposit: Decimal, notes: str | None = None) -> dict:
     account_id = uuid4()
     account = {
         "id": account_id,
         "owner_name": owner_name,
         "balance": initial_deposit,
+        "notes": notes,
         "created_at": datetime.now(timezone.utc),
     }
     with _lock:
         _accounts[account_id] = account
         _transactions[account_id] = []
     return account
+
+
+def update_account(account_id: UUID, notes: str | None) -> dict:
+    with _lock:
+        account = _get_account(account_id)
+        account["notes"] = notes
+        return account
 
 
 def list_accounts() -> list[dict]:

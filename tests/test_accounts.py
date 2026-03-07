@@ -591,3 +591,132 @@ async def test_transaction_history_balance_tracking(client: AsyncClient) -> None
 
     assert data[3]["type"] == "deposit"
     assert Decimal(data[3]["balance_after"]) == Decimal("1200")
+
+
+# ---------- Account Notes ----------
+
+
+async def test_create_account_without_notes(client: AsyncClient) -> None:
+    """Create account without notes; notes should be None in response."""
+    resp = await client.post(
+        f"{BASE_URL}/", json={"owner_name": "Alice", "initial_deposit": "100"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["notes"] is None
+
+
+async def test_create_account_with_notes(client: AsyncClient) -> None:
+    """Create account with notes; notes should appear in response."""
+    resp = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Bob", "initial_deposit": "50", "notes": "My savings"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["notes"] == "My savings"
+
+
+async def test_create_account_notes_too_long(client: AsyncClient) -> None:
+    """Notes exceeding max_length=500 should be rejected with 422."""
+    long_notes = "N" * 501
+    resp = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Carol", "notes": long_notes},
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_account_empty_notes(client: AsyncClient) -> None:
+    """Empty string notes should be allowed."""
+    resp = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Dave", "initial_deposit": "0", "notes": ""},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["notes"] == ""
+
+
+async def test_get_account_includes_notes(client: AsyncClient) -> None:
+    """GET single account should return the notes field."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Eve", "initial_deposit": "100", "notes": "Emergency fund"},
+    )
+    account_id = create_resp.json()["id"]
+
+    resp = await client.get(f"{BASE_URL}/{account_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["notes"] == "Emergency fund"
+
+
+async def test_list_accounts_includes_notes(client: AsyncClient) -> None:
+    """Listing accounts should include the notes field."""
+    await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Frank", "initial_deposit": "10", "notes": "Vacation fund"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["notes"] == "Vacation fund"
+
+
+async def test_update_notes_success(client: AsyncClient) -> None:
+    """PATCH account with new notes should update and return them."""
+    create_resp = await _create_account(client, owner_name="Grace", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.patch(
+        f"{BASE_URL}/{account_id}",
+        json={"notes": "Updated notes"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["notes"] == "Updated notes"
+    assert data["id"] == account_id
+
+
+async def test_update_notes_to_null(client: AsyncClient) -> None:
+    """PATCH account with notes=null should clear the notes."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Heidi", "initial_deposit": "50", "notes": "Some notes"},
+    )
+    account_id = create_resp.json()["id"]
+
+    resp = await client.patch(
+        f"{BASE_URL}/{account_id}",
+        json={"notes": None},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["notes"] is None
+
+
+async def test_update_notes_account_not_found(client: AsyncClient) -> None:
+    """PATCH a non-existent account should return 404."""
+    fake_id = str(uuid4())
+    resp = await client.patch(
+        f"{BASE_URL}/{fake_id}",
+        json={"notes": "Does not matter"},
+    )
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+async def test_update_notes_too_long(client: AsyncClient) -> None:
+    """PATCH with notes exceeding max_length=500 should return 422."""
+    create_resp = await _create_account(client, owner_name="Ivan", initial_deposit="10")
+    account_id = create_resp.json()["id"]
+
+    long_notes = "X" * 501
+    resp = await client.patch(
+        f"{BASE_URL}/{account_id}",
+        json={"notes": long_notes},
+    )
+    assert resp.status_code == 422
