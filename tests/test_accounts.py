@@ -593,6 +593,7 @@ async def test_transaction_history_balance_tracking(client: AsyncClient) -> None
     assert Decimal(data[3]["balance_after"]) == Decimal("1200")
 
 
+
 # ---------- Account Notes ----------
 
 
