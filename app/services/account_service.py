@@ -14,9 +14,16 @@ class InsufficientFundsError(Exception):
     pass
 
 
+class AlertNotFoundError(Exception):
+    def __init__(self, alert_id: UUID) -> None:
+        self.alert_id = alert_id
+        super().__init__(f"Alert {alert_id} not found")
+
+
 # In-memory store: dict of UUID -> account dict
 _accounts: dict[UUID, dict] = {}
 _transactions: dict[UUID, list[dict]] = {}
+_alerts: dict[UUID, list[dict]] = {}
 _lock = threading.Lock()
 
 
@@ -39,6 +46,7 @@ def create_account(owner_name: str, initial_deposit: Decimal, notes: str | None 
     with _lock:
         _accounts[account_id] = account
         _transactions[account_id] = []
+        _alerts[account_id] = []
     return account
 
 
@@ -110,3 +118,48 @@ def get_transactions(account_id: UUID) -> list[dict]:
     with _lock:
         _get_account(account_id)
         return list(_transactions[account_id])
+
+
+def create_alert(account_id: UUID, threshold: Decimal, direction: str) -> dict:
+    with _lock:
+        _get_account(account_id)
+        alert = {
+            "id": uuid4(),
+            "account_id": account_id,
+            "threshold": threshold,
+            "direction": direction,
+            "created_at": datetime.now(timezone.utc),
+        }
+        _alerts[account_id].append(alert)
+        return alert
+
+
+def list_alerts(account_id: UUID) -> list[dict]:
+    with _lock:
+        _get_account(account_id)
+        return list(_alerts[account_id])
+
+
+def delete_alert(account_id: UUID, alert_id: UUID) -> None:
+    with _lock:
+        _get_account(account_id)
+        alerts = _alerts[account_id]
+        for i, alert in enumerate(alerts):
+            if alert["id"] == alert_id:
+                alerts.pop(i)
+                return
+        raise AlertNotFoundError(alert_id)
+
+
+def check_alerts(account_id: UUID) -> list[dict]:
+    with _lock:
+        account = _get_account(account_id)
+        balance = account["balance"]
+        result = []
+        for alert in _alerts[account_id]:
+            if alert["direction"] == "below":
+                triggered = balance < alert["threshold"]
+            else:
+                triggered = balance > alert["threshold"]
+            result.append({**alert, "triggered": triggered})
+        return result

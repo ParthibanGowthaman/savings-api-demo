@@ -16,6 +16,7 @@ def clear_accounts():
     """Clear in-memory store before each test."""
     account_service._accounts.clear()
     account_service._transactions.clear()
+    account_service._alerts.clear()
 
 
 @pytest_asyncio.fixture
@@ -593,6 +594,7 @@ async def test_transaction_history_balance_tracking(client: AsyncClient) -> None
     assert Decimal(data[3]["balance_after"]) == Decimal("1200")
 
 
+
 # ---------- Account Notes ----------
 
 
@@ -720,3 +722,271 @@ async def test_update_notes_too_long(client: AsyncClient) -> None:
         json={"notes": long_notes},
     )
     assert resp.status_code == 422
+
+
+# ---------- Balance Alerts ----------
+
+
+async def test_create_alert_below(client: AsyncClient) -> None:
+    """Create a 'below' alert and verify response fields."""
+    create_resp = await _create_account(client, owner_name="Alice", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100.00", "direction": "below"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["account_id"] == account_id
+    assert Decimal(data["threshold"]) == Decimal("100.00")
+    assert data["direction"] == "below"
+    assert "id" in data
+    assert "created_at" in data
+
+
+async def test_create_alert_above(client: AsyncClient) -> None:
+    """Create an 'above' alert and verify response fields."""
+    create_resp = await _create_account(client, owner_name="Bob", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "1000.00", "direction": "above"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["direction"] == "above"
+    assert Decimal(data["threshold"]) == Decimal("1000.00")
+
+
+async def test_create_alert_account_not_found(client: AsyncClient) -> None:
+    """Creating an alert on a nonexistent account should return 404."""
+    fake_id = str(uuid4())
+    resp = await client.post(
+        f"{BASE_URL}/{fake_id}/alerts",
+        json={"threshold": "100", "direction": "below"},
+    )
+    assert resp.status_code == 404
+
+
+async def test_create_alert_invalid_direction(client: AsyncClient) -> None:
+    """Invalid direction should be rejected (422)."""
+    create_resp = await _create_account(client, owner_name="Carol", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "50", "direction": "sideways"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_alert_negative_threshold(client: AsyncClient) -> None:
+    """Negative threshold should be rejected (422)."""
+    create_resp = await _create_account(client, owner_name="Dave", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "-10", "direction": "below"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_list_alerts_empty(client: AsyncClient) -> None:
+    """New account with no alerts returns empty list."""
+    create_resp = await _create_account(client, owner_name="Eve", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_list_alerts_multiple(client: AsyncClient) -> None:
+    """Create 2 alerts, list returns both."""
+    create_resp = await _create_account(client, owner_name="Frank", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100", "direction": "below"},
+    )
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "1000", "direction": "above"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+async def test_list_alerts_account_not_found(client: AsyncClient) -> None:
+    """Listing alerts on a nonexistent account should return 404."""
+    fake_id = str(uuid4())
+    resp = await client.get(f"{BASE_URL}/{fake_id}/alerts")
+    assert resp.status_code == 404
+
+
+async def test_delete_alert_success(client: AsyncClient) -> None:
+    """Create an alert, delete it, verify list is empty."""
+    create_resp = await _create_account(client, owner_name="Grace", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    alert_resp = await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "50", "direction": "below"},
+    )
+    alert_id = alert_resp.json()["id"]
+
+    resp = await client.delete(f"{BASE_URL}/{account_id}/alerts/{alert_id}")
+    assert resp.status_code == 204
+
+    list_resp = await client.get(f"{BASE_URL}/{account_id}/alerts")
+    assert list_resp.json() == []
+
+
+async def test_delete_alert_not_found(client: AsyncClient) -> None:
+    """Deleting a nonexistent alert should return 404."""
+    create_resp = await _create_account(client, owner_name="Heidi", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+    fake_alert_id = str(uuid4())
+
+    resp = await client.delete(f"{BASE_URL}/{account_id}/alerts/{fake_alert_id}")
+    assert resp.status_code == 404
+
+
+async def test_delete_alert_account_not_found(client: AsyncClient) -> None:
+    """Deleting an alert on a nonexistent account should return 404."""
+    fake_id = str(uuid4())
+    fake_alert_id = str(uuid4())
+    resp = await client.delete(f"{BASE_URL}/{fake_id}/alerts/{fake_alert_id}")
+    assert resp.status_code == 404
+
+
+async def test_check_alerts_none_triggered(client: AsyncClient) -> None:
+    """Balance 500, alert below 100 -> triggered=False."""
+    create_resp = await _create_account(client, owner_name="Ivan", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100", "direction": "below"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts/check")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["triggered"] is False
+
+
+async def test_check_alerts_below_triggered(client: AsyncClient) -> None:
+    """Balance 50, alert below 100 -> triggered=True."""
+    create_resp = await _create_account(client, owner_name="Judy", initial_deposit="50")
+    account_id = create_resp.json()["id"]
+
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100", "direction": "below"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts/check")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["triggered"] is True
+
+
+async def test_check_alerts_above_triggered(client: AsyncClient) -> None:
+    """Balance 500, alert above 100 -> triggered=True."""
+    create_resp = await _create_account(client, owner_name="Karl", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100", "direction": "above"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts/check")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["triggered"] is True
+
+
+async def test_check_alerts_above_not_triggered(client: AsyncClient) -> None:
+    """Balance 50, alert above 100 -> triggered=False."""
+    create_resp = await _create_account(client, owner_name="Liam", initial_deposit="50")
+    account_id = create_resp.json()["id"]
+
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100", "direction": "above"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts/check")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["triggered"] is False
+
+
+async def test_check_alerts_multiple_mixed(client: AsyncClient) -> None:
+    """Multiple alerts, some triggered some not."""
+    create_resp = await _create_account(client, owner_name="Mia", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "1000", "direction": "below"},
+    )
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100", "direction": "below"},
+    )
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100", "direction": "above"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts/check")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 3
+
+    triggered_map = {(a["direction"], a["threshold"]): a["triggered"] for a in data}
+    assert triggered_map[("below", "1000")] is True   # 500 < 1000
+    assert triggered_map[("below", "100")] is False    # 500 >= 100
+    assert triggered_map[("above", "100")] is True     # 500 > 100
+
+
+async def test_check_alerts_account_not_found(client: AsyncClient) -> None:
+    """Checking alerts on a nonexistent account should return 404."""
+    fake_id = str(uuid4())
+    resp = await client.get(f"{BASE_URL}/{fake_id}/alerts/check")
+    assert resp.status_code == 404
+
+
+async def test_check_alerts_after_deposit_changes_trigger(client: AsyncClient) -> None:
+    """Balance starts below threshold, deposit pushes above, alert status changes."""
+    create_resp = await _create_account(client, owner_name="Noah", initial_deposit="50")
+    account_id = create_resp.json()["id"]
+
+    await client.post(
+        f"{BASE_URL}/{account_id}/alerts",
+        json={"threshold": "100", "direction": "below"},
+    )
+
+    # Before deposit: balance 50 < 100 -> triggered
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts/check")
+    assert resp.json()[0]["triggered"] is True
+
+    # Deposit to push above threshold
+    await client.post(f"{BASE_URL}/{account_id}/deposit", json={"amount": "200"})
+
+    # After deposit: balance 250 >= 100 -> not triggered
+    resp = await client.get(f"{BASE_URL}/{account_id}/alerts/check")
+    assert resp.json()[0]["triggered"] is False
