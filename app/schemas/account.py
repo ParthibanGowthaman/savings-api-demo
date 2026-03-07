@@ -26,3 +26,24 @@ class TransactionResponse(BaseModel):
     owner_name: str
     balance: Decimal
     message: str
+
+
+class InterestRequest(BaseModel):
+    rate: Decimal = Field(default=Decimal("0.05"), gt=Decimal("0"), le=Decimal("1"))
+
+
+class InterestResponse(BaseModel):
+    id: UUID
+    owner_name: str
+    balance: Decimal
+    interest_earned: Decimal
+    rate: Decimal
+    message: str
+
+
+class TransactionHistoryEntry(BaseModel):
+    id: UUID
+    type: str
+    amount: Decimal
+    balance_after: Decimal
+    timestamp: datetime

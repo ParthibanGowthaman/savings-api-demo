@@ -7,6 +7,9 @@ from fastapi import APIRouter, HTTPException, status
 from app.schemas.account import (
     AccountCreate,
     AccountResponse,
+    InterestRequest,
+    InterestResponse,
+    TransactionHistoryEntry,
     TransactionRequest,
     TransactionResponse,
 )
@@ -54,6 +57,18 @@ async def deposit(account_id: UUID, payload: TransactionRequest) -> TransactionR
     return TransactionResponse(**account, message=f"Deposited {payload.amount}")
 
 
+@router.post("/{account_id}/interest", response_model=InterestResponse)
+async def apply_interest(account_id: UUID, payload: InterestRequest) -> InterestResponse:
+    try:
+        result = await _run_sync(account_service.apply_interest, account_id, payload.rate)
+    except AccountNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return InterestResponse(
+        **result,
+        message=f"Applied {payload.rate * 100:.2f}% interest, earned {result['interest_earned']}",
+    )
+
+
 @router.post("/{account_id}/withdraw", response_model=TransactionResponse)
 async def withdraw(account_id: UUID, payload: TransactionRequest) -> TransactionResponse:
     try:
@@ -63,3 +78,12 @@ async def withdraw(account_id: UUID, payload: TransactionRequest) -> Transaction
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return TransactionResponse(**account, message=f"Withdrew {payload.amount}")
+
+
+@router.get("/{account_id}/transactions", response_model=list[TransactionHistoryEntry])
+async def get_transactions(account_id: UUID) -> list[TransactionHistoryEntry]:
+    try:
+        transactions = await _run_sync(account_service.get_transactions, account_id)
+    except AccountNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return [TransactionHistoryEntry(**t) for t in transactions]
