@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(.env)",
+      "Grep(path:.env)",
+      "Bash(cat .env*)",
+      "Bash(*cat .env*)"
+    ],
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(git status)",
+      "Bash(git diff)",
+      "Bash(git diff --staged)",
+      "Bash(git log --oneline *)",
+      "Bash(git remote -v)",
+      "Bash(git add *)",
+      "Bash(git checkout -b *)",
+      "Bash(git commit -m *)",
+      "Bash(git push -u origin *)",
+      "Bash(cd * && python *)",
+      "Bash(cd * && pytest *)"
+    ]
+  }
+}
