@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -53,3 +54,20 @@ class TransactionHistoryEntry(BaseModel):
     amount: Decimal
     balance_after: Decimal
     timestamp: datetime
+
+
+class AlertCreate(BaseModel):
+    threshold: Decimal = Field(..., ge=Decimal("0"))
+    direction: Literal["above", "below"]
+
+
+class AlertResponse(BaseModel):
+    id: UUID
+    account_id: UUID
+    threshold: Decimal
+    direction: str
+    created_at: datetime
+
+
+class AlertCheckResponse(AlertResponse):
+    triggered: bool

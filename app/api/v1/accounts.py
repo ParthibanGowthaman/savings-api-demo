@@ -1,5 +1,5 @@
 import asyncio
-from functools import partial
+from typing import Any, Callable
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -8,6 +8,9 @@ from app.schemas.account import (
     AccountCreate,
     AccountResponse,
     AccountUpdate,
+    AlertCheckResponse,
+    AlertCreate,
+    AlertResponse,
     InterestRequest,
     InterestResponse,
     TransactionHistoryEntry,
@@ -15,26 +18,36 @@ from app.schemas.account import (
     TransactionResponse,
 )
 from app.services import account_service
-from app.services.account_service import AccountNotFoundError, InsufficientFundsError
+from app.services.account_service import (
+    AccountNotFoundError,
+    AlertNotFoundError,
+    InsufficientFundsError,
+)
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
-async def _run_sync(func, *args):
-    """Run a sync service function in a thread pool to avoid blocking the event loop."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(func, *args))
+async def _call_service(func: Callable[..., Any], *args: Any) -> Any:
+    """Run a sync service function in a thread, translating domain errors to HTTP errors."""
+    try:
+        return await asyncio.to_thread(func, *args)
+    except AccountNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except AlertNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except InsufficientFundsError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.get("/", response_model=list[AccountResponse])
 async def list_accounts() -> list[AccountResponse]:
-    accounts = await _run_sync(account_service.list_accounts)
+    accounts = await _call_service(account_service.list_accounts)
     return [AccountResponse(**a) for a in accounts]
 
 
 @router.post("/", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
 async def create_account(payload: AccountCreate) -> AccountResponse:
-    account = await _run_sync(
+    account = await _call_service(
         account_service.create_account, payload.owner_name, payload.initial_deposit, payload.notes
     )
     return AccountResponse(**account)
@@ -42,37 +55,25 @@ async def create_account(payload: AccountCreate) -> AccountResponse:
 
 @router.patch("/{account_id}", response_model=AccountResponse)
 async def update_account(account_id: UUID, payload: AccountUpdate) -> AccountResponse:
-    try:
-        account = await _run_sync(account_service.update_account, account_id, payload.notes)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    account = await _call_service(account_service.update_account, account_id, payload.notes)
     return AccountResponse(**account)
 
 
 @router.get("/{account_id}", response_model=AccountResponse)
 async def get_account(account_id: UUID) -> AccountResponse:
-    try:
-        account = await _run_sync(account_service.get_account, account_id)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    account = await _call_service(account_service.get_account, account_id)
     return AccountResponse(**account)
 
 
 @router.post("/{account_id}/deposit", response_model=TransactionResponse)
 async def deposit(account_id: UUID, payload: TransactionRequest) -> TransactionResponse:
-    try:
-        account = await _run_sync(account_service.deposit, account_id, payload.amount)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    account = await _call_service(account_service.deposit, account_id, payload.amount)
     return TransactionResponse(**account, message=f"Deposited {payload.amount}")
 
 
 @router.post("/{account_id}/interest", response_model=InterestResponse)
 async def apply_interest(account_id: UUID, payload: InterestRequest) -> InterestResponse:
-    try:
-        result = await _run_sync(account_service.apply_interest, account_id, payload.rate)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    result = await _call_service(account_service.apply_interest, account_id, payload.rate)
     return InterestResponse(
         **result,
         message=f"Applied {payload.rate * 100:.2f}% interest, earned {result['interest_earned']}",
@@ -81,19 +82,40 @@ async def apply_interest(account_id: UUID, payload: InterestRequest) -> Interest
 
 @router.post("/{account_id}/withdraw", response_model=TransactionResponse)
 async def withdraw(account_id: UUID, payload: TransactionRequest) -> TransactionResponse:
-    try:
-        account = await _run_sync(account_service.withdraw, account_id, payload.amount)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    except InsufficientFundsError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    account = await _call_service(account_service.withdraw, account_id, payload.amount)
     return TransactionResponse(**account, message=f"Withdrew {payload.amount}")
 
 
 @router.get("/{account_id}/transactions", response_model=list[TransactionHistoryEntry])
 async def get_transactions(account_id: UUID) -> list[TransactionHistoryEntry]:
-    try:
-        transactions = await _run_sync(account_service.get_transactions, account_id)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    transactions = await _call_service(account_service.get_transactions, account_id)
     return [TransactionHistoryEntry(**t) for t in transactions]
+
+
+@router.post(
+    "/{account_id}/alerts", response_model=AlertResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_alert(account_id: UUID, payload: AlertCreate) -> AlertResponse:
+    alert = await _call_service(
+        account_service.create_alert, account_id, payload.threshold, payload.direction
+    )
+    return AlertResponse(**alert)
+
+
+@router.get("/{account_id}/alerts/check", response_model=list[AlertCheckResponse])
+async def check_alerts(account_id: UUID) -> list[AlertCheckResponse]:
+    alerts = await _call_service(account_service.check_alerts, account_id)
+    return [AlertCheckResponse(**a) for a in alerts]
+
+
+@router.get("/{account_id}/alerts", response_model=list[AlertResponse])
+async def list_alerts(account_id: UUID) -> list[AlertResponse]:
+    alerts = await _call_service(account_service.list_alerts, account_id)
+    return [AlertResponse(**a) for a in alerts]
+
+
+@router.delete(
+    "/{account_id}/alerts/{alert_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_alert(account_id: UUID, alert_id: UUID) -> None:
+    await _call_service(account_service.delete_alert, account_id, alert_id)
