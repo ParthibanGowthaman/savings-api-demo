@@ -990,3 +990,30 @@ async def test_check_alerts_after_deposit_changes_trigger(client: AsyncClient) -
     # After deposit: balance 250 >= 100 -> not triggered
     resp = await client.get(f"{BASE_URL}/{account_id}/alerts/check")
     assert resp.json()[0]["triggered"] is False
+
+
+# ---------- Ping Endpoint ----------
+
+
+async def test_ping_returns_200(client: AsyncClient) -> None:
+    """GET /ping should return 200."""
+    resp = await client.get("/ping")
+    assert resp.status_code == 200
+
+
+async def test_ping_response_fields(client: AsyncClient) -> None:
+    """GET /ping should return status and timestamp."""
+    resp = await client.get("/ping")
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "timestamp" in data
+
+
+async def test_ping_timestamp_is_valid(client: AsyncClient) -> None:
+    """Timestamp should be a valid ISO datetime string."""
+    from datetime import datetime
+
+    resp = await client.get("/ping")
+    data = resp.json()
+    # Should not raise
+    datetime.fromisoformat(data["timestamp"])
