@@ -14,6 +14,12 @@ class InsufficientFundsError(Exception):
     pass
 
 
+class AccountFrozenError(Exception):
+    def __init__(self, account_id: UUID) -> None:
+        self.account_id = account_id
+        super().__init__(f"Account {account_id} is frozen")
+
+
 class AlertNotFoundError(Exception):
     def __init__(self, alert_id: UUID) -> None:
         self.alert_id = alert_id
@@ -41,6 +47,7 @@ def create_account(owner_name: str, initial_deposit: Decimal, notes: str | None 
         "owner_name": owner_name,
         "balance": initial_deposit,
         "notes": notes,
+        "is_frozen": False,
         "created_at": datetime.now(timezone.utc),
     }
     with _lock:
@@ -67,9 +74,30 @@ def get_account(account_id: UUID) -> dict:
         return _get_account(account_id)
 
 
+def _set_frozen(account_id: UUID, frozen: bool) -> dict:
+    with _lock:
+        account = _get_account(account_id)
+        account["is_frozen"] = frozen
+        return account
+
+
+def freeze_account(account_id: UUID) -> dict:
+    return _set_frozen(account_id, True)
+
+
+def unfreeze_account(account_id: UUID) -> dict:
+    return _set_frozen(account_id, False)
+
+
+def _check_frozen(account: dict) -> None:
+    if account.get("is_frozen"):
+        raise AccountFrozenError(account["id"])
+
+
 def deposit(account_id: UUID, amount: Decimal) -> dict:
     with _lock:
         account = _get_account(account_id)
+        _check_frozen(account)
         account["balance"] += amount
         _transactions[account_id].append({
             "id": uuid4(),
@@ -84,6 +112,7 @@ def deposit(account_id: UUID, amount: Decimal) -> dict:
 def apply_interest(account_id: UUID, rate: Decimal) -> dict:
     with _lock:
         account = _get_account(account_id)
+        _check_frozen(account)
         interest = (account["balance"] * rate).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
@@ -101,6 +130,7 @@ def apply_interest(account_id: UUID, rate: Decimal) -> dict:
 def withdraw(account_id: UUID, amount: Decimal) -> dict:
     with _lock:
         account = _get_account(account_id)
+        _check_frozen(account)
         if amount > account["balance"]:
             raise InsufficientFundsError("Insufficient funds")
         account["balance"] -= amount

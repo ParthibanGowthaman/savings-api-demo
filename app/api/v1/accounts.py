@@ -19,6 +19,7 @@ from app.schemas.account import (
 )
 from app.services import account_service
 from app.services.account_service import (
+    AccountFrozenError,
     AccountNotFoundError,
     AlertNotFoundError,
     InsufficientFundsError,
@@ -31,10 +32,10 @@ async def _call_service(func: Callable[..., Any], *args: Any) -> Any:
     """Run a sync service function in a thread, translating domain errors to HTTP errors."""
     try:
         return await asyncio.to_thread(func, *args)
-    except AccountNotFoundError as exc:
+    except (AccountNotFoundError, AlertNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    except AlertNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except AccountFrozenError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except InsufficientFundsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -56,6 +57,18 @@ async def create_account(payload: AccountCreate) -> AccountResponse:
 @router.patch("/{account_id}", response_model=AccountResponse)
 async def update_account(account_id: UUID, payload: AccountUpdate) -> AccountResponse:
     account = await _call_service(account_service.update_account, account_id, payload.notes)
+    return AccountResponse(**account)
+
+
+@router.post("/{account_id}/freeze", response_model=AccountResponse)
+async def freeze_account(account_id: UUID) -> AccountResponse:
+    account = await _call_service(account_service.freeze_account, account_id)
+    return AccountResponse(**account)
+
+
+@router.post("/{account_id}/unfreeze", response_model=AccountResponse)
+async def unfreeze_account(account_id: UUID) -> AccountResponse:
+    account = await _call_service(account_service.unfreeze_account, account_id)
     return AccountResponse(**account)
 
 

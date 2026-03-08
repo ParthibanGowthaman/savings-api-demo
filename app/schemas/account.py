@@ -21,6 +21,7 @@ class AccountResponse(BaseModel):
     owner_name: str
     balance: Decimal
     notes: str | None
+    is_frozen: bool
     created_at: datetime
 
 
