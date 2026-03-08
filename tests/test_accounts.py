@@ -1017,3 +1017,178 @@ async def test_ping_timestamp_is_valid(client: AsyncClient) -> None:
     data = resp.json()
     # Should not raise
     datetime.fromisoformat(data["timestamp"])
+
+
+# ---------- Freeze / Unfreeze Account ----------
+
+
+async def test_freeze_account(client: AsyncClient) -> None:
+    """Freezing an account should return 200 with is_frozen=True."""
+    create_resp = await _create_account(client, owner_name="Alice", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(f"{BASE_URL}/{account_id}/freeze")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_frozen"] is True
+    assert data["id"] == account_id
+
+
+async def test_freeze_account_not_found(client: AsyncClient) -> None:
+    """Freezing a non-existent account should return 404."""
+    fake_id = str(uuid4())
+    resp = await client.post(f"{BASE_URL}/{fake_id}/freeze")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+async def test_freeze_already_frozen(client: AsyncClient) -> None:
+    """Freezing an already frozen account is idempotent (returns 200, is_frozen=True)."""
+    create_resp = await _create_account(client, owner_name="Bob", initial_deposit="200")
+    account_id = create_resp.json()["id"]
+
+    await client.post(f"{BASE_URL}/{account_id}/freeze")
+    resp = await client.post(f"{BASE_URL}/{account_id}/freeze")
+    assert resp.status_code == 200
+    assert resp.json()["is_frozen"] is True
+
+
+async def test_unfreeze_account(client: AsyncClient) -> None:
+    """Unfreezing a frozen account should return 200 with is_frozen=False."""
+    create_resp = await _create_account(client, owner_name="Carol", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    await client.post(f"{BASE_URL}/{account_id}/freeze")
+    resp = await client.post(f"{BASE_URL}/{account_id}/unfreeze")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_frozen"] is False
+    assert data["id"] == account_id
+
+
+async def test_unfreeze_account_not_found(client: AsyncClient) -> None:
+    """Unfreezing a non-existent account should return 404."""
+    fake_id = str(uuid4())
+    resp = await client.post(f"{BASE_URL}/{fake_id}/unfreeze")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+async def test_unfreeze_already_unfrozen(client: AsyncClient) -> None:
+    """Unfreezing an already unfrozen account is idempotent (returns 200, is_frozen=False)."""
+    create_resp = await _create_account(client, owner_name="Dave", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(f"{BASE_URL}/{account_id}/unfreeze")
+    assert resp.status_code == 200
+    assert resp.json()["is_frozen"] is False
+
+
+# ---------- Frozen Account Blocks Financial Operations ----------
+
+
+@pytest.mark.parametrize("endpoint,payload", [
+    ("deposit", {"amount": "50.00"}),
+    ("withdraw", {"amount": "50"}),
+    ("interest", {"rate": "0.05"}),
+])
+async def test_frozen_account_blocks_financial_operations(
+    client: AsyncClient, endpoint: str, payload: dict
+) -> None:
+    """Financial operations on a frozen account should return 409 Conflict."""
+    create_resp = await _create_account(client, owner_name="Eve", initial_deposit="1000")
+    account_id = create_resp.json()["id"]
+
+    await client.post(f"{BASE_URL}/{account_id}/freeze")
+    resp = await client.post(f"{BASE_URL}/{account_id}/{endpoint}", json=payload)
+    assert resp.status_code == 409
+    assert "frozen" in resp.json()["detail"].lower()
+
+
+# ---------- Frozen Account Allows Non-Financial Operations ----------
+
+
+async def test_update_notes_frozen_account(client: AsyncClient) -> None:
+    """Updating notes on a frozen account should still succeed (200)."""
+    create_resp = await _create_account(client, owner_name="Heidi", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    await client.post(f"{BASE_URL}/{account_id}/freeze")
+    resp = await client.patch(
+        f"{BASE_URL}/{account_id}",
+        json={"notes": "Frozen but notes updated"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["notes"] == "Frozen but notes updated"
+    assert resp.json()["is_frozen"] is True
+
+
+async def test_get_frozen_account(client: AsyncClient) -> None:
+    """GET on a frozen account should succeed and show is_frozen=True."""
+    create_resp = await _create_account(client, owner_name="Ivan", initial_deposit="300")
+    account_id = create_resp.json()["id"]
+
+    await client.post(f"{BASE_URL}/{account_id}/freeze")
+    resp = await client.get(f"{BASE_URL}/{account_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_frozen"] is True
+    assert data["id"] == account_id
+
+
+async def test_list_accounts_shows_frozen_status(client: AsyncClient) -> None:
+    """Listing accounts should include is_frozen field for each account."""
+    create_resp1 = await _create_account(client, owner_name="Judy", initial_deposit="100")
+    account_id1 = create_resp1.json()["id"]
+    await _create_account(client, owner_name="Karl", initial_deposit="200")
+
+    await client.post(f"{BASE_URL}/{account_id1}/freeze")
+
+    resp = await client.get(f"{BASE_URL}/")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+
+    frozen_map = {a["owner_name"]: a["is_frozen"] for a in data}
+    assert frozen_map["Judy"] is True
+    assert frozen_map["Karl"] is False
+
+
+# ---------- Unfreeze Restores Operations ----------
+
+
+async def test_unfreeze_then_deposit(client: AsyncClient) -> None:
+    """After unfreezing, deposit should work again."""
+    create_resp = await _create_account(client, owner_name="Liam", initial_deposit="100")
+    account_id = create_resp.json()["id"]
+
+    # Freeze, verify deposit blocked
+    await client.post(f"{BASE_URL}/{account_id}/freeze")
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/deposit",
+        json={"amount": "50"},
+    )
+    assert resp.status_code == 409
+
+    # Unfreeze, verify deposit works
+    await client.post(f"{BASE_URL}/{account_id}/unfreeze")
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/deposit",
+        json={"amount": "50"},
+    )
+    assert resp.status_code == 200
+    assert Decimal(resp.json()["balance"]) == Decimal("150")
+
+
+# ---------- Account Creation Default Frozen State ----------
+
+
+async def test_new_account_is_not_frozen(client: AsyncClient) -> None:
+    """Newly created accounts should have is_frozen=False."""
+    resp = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Mia", "initial_deposit": "500"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["is_frozen"] is False
