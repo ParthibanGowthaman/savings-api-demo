@@ -211,3 +211,4 @@ reports/builds/
 
 # Keep summary tracked (team sees running history)
 !reports/summary.md
+".claude/worktrees/" 
