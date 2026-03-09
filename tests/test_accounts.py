@@ -1192,3 +1192,349 @@ async def test_new_account_is_not_frozen(client: AsyncClient) -> None:
     assert resp.status_code == 201
     data = resp.json()
     assert data["is_frozen"] is False
+
+
+# ---------- Daily Withdrawal Limit ----------
+
+
+async def test_create_account_with_withdrawal_limit(client: AsyncClient) -> None:
+    """Create account with daily_withdrawal_limit; verify it appears in response."""
+    resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Alice",
+            "initial_deposit": "1000",
+            "daily_withdrawal_limit": "500",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert Decimal(data["daily_withdrawal_limit"]) == Decimal("500")
+
+
+async def test_create_account_default_no_withdrawal_limit(client: AsyncClient) -> None:
+    """Create account without daily_withdrawal_limit; verify None in response."""
+    resp = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Bob", "initial_deposit": "100"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["daily_withdrawal_limit"] is None
+
+
+async def test_create_account_negative_withdrawal_limit(client: AsyncClient) -> None:
+    """Negative daily_withdrawal_limit should be rejected with 422."""
+    resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Carol",
+            "initial_deposit": "100",
+            "daily_withdrawal_limit": "-50",
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_withdraw_within_daily_limit(client: AsyncClient) -> None:
+    """Withdraw within the daily limit; should succeed."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Dave",
+            "initial_deposit": "1000",
+            "daily_withdrawal_limit": "500",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "200"},
+    )
+    assert resp.status_code == 200
+    assert Decimal(resp.json()["balance"]) == Decimal("800")
+
+
+async def test_withdraw_exceeds_daily_limit(client: AsyncClient) -> None:
+    """Single withdrawal exceeding daily limit should return 400."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Eve",
+            "initial_deposit": "1000",
+            "daily_withdrawal_limit": "200",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "300"},
+    )
+    assert resp.status_code == 400
+    assert "limit" in resp.json()["detail"].lower()
+
+
+async def test_withdraw_cumulative_exceeds_daily_limit(client: AsyncClient) -> None:
+    """Multiple withdrawals; last one pushes over the daily limit, returns 400."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Frank",
+            "initial_deposit": "1000",
+            "daily_withdrawal_limit": "300",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    # First withdrawal: 150, within limit
+    resp1 = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "150"},
+    )
+    assert resp1.status_code == 200
+
+    # Second withdrawal: 100, cumulative 250, still within limit
+    resp2 = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "100"},
+    )
+    assert resp2.status_code == 200
+
+    # Third withdrawal: 60, cumulative would be 310 > 300, should fail
+    resp3 = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "60"},
+    )
+    assert resp3.status_code == 400
+    assert "limit" in resp3.json()["detail"].lower()
+
+
+async def test_withdraw_exact_daily_limit(client: AsyncClient) -> None:
+    """Withdraw exactly the daily limit amount; should succeed."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Grace",
+            "initial_deposit": "1000",
+            "daily_withdrawal_limit": "500",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "500"},
+    )
+    assert resp.status_code == 200
+    assert Decimal(resp.json()["balance"]) == Decimal("500")
+
+
+async def test_withdraw_no_limit_set(client: AsyncClient) -> None:
+    """No daily limit set; large withdrawal succeeds if balance allows."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Heidi", "initial_deposit": "10000"},
+    )
+    account_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "9999"},
+    )
+    assert resp.status_code == 200
+    assert Decimal(resp.json()["balance"]) == Decimal("1")
+
+
+async def test_update_withdrawal_limit(client: AsyncClient) -> None:
+    """PATCH withdrawal-limit to set a limit; verify response."""
+    create_resp = await _create_account(client, owner_name="Ivan", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.patch(
+        f"{BASE_URL}/{account_id}/withdrawal-limit",
+        json={"daily_withdrawal_limit": "200"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert Decimal(data["daily_withdrawal_limit"]) == Decimal("200")
+    assert data["id"] == account_id
+
+
+async def test_update_withdrawal_limit_remove(client: AsyncClient) -> None:
+    """PATCH with null to remove daily limit."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Judy",
+            "initial_deposit": "500",
+            "daily_withdrawal_limit": "100",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    resp = await client.patch(
+        f"{BASE_URL}/{account_id}/withdrawal-limit",
+        json={"daily_withdrawal_limit": None},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["daily_withdrawal_limit"] is None
+
+
+async def test_update_withdrawal_limit_not_found(client: AsyncClient) -> None:
+    """PATCH withdrawal-limit on nonexistent account returns 404."""
+    fake_id = str(uuid4())
+    resp = await client.patch(
+        f"{BASE_URL}/{fake_id}/withdrawal-limit",
+        json={"daily_withdrawal_limit": "100"},
+    )
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+async def test_update_withdrawal_limit_negative(client: AsyncClient) -> None:
+    """PATCH with negative daily_withdrawal_limit returns 422."""
+    create_resp = await _create_account(client, owner_name="Karl", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    resp = await client.patch(
+        f"{BASE_URL}/{account_id}/withdrawal-limit",
+        json={"daily_withdrawal_limit": "-50"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_frozen_account_before_limit_check(client: AsyncClient) -> None:
+    """Frozen error takes precedence over daily withdrawal limit error."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Liam",
+            "initial_deposit": "1000",
+            "daily_withdrawal_limit": "100",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    await client.post(f"{BASE_URL}/{account_id}/freeze")
+
+    # Attempt withdrawal that would also exceed limit
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "500"},
+    )
+    assert resp.status_code == 409
+    assert "frozen" in resp.json()["detail"].lower()
+
+
+async def test_insufficient_funds_vs_limit(client: AsyncClient) -> None:
+    """Distinct errors: limit exceeded (400) vs insufficient funds (400) with different messages."""
+    # Account with balance 100 and daily limit 50
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Mia",
+            "initial_deposit": "100",
+            "daily_withdrawal_limit": "50",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    # Withdraw 60: exceeds daily limit (60 > 50), should mention "limit"
+    resp_limit = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "60"},
+    )
+    assert resp_limit.status_code == 400
+    assert "limit" in resp_limit.json()["detail"].lower()
+
+    # Account with no limit but low balance
+    create_resp2 = await client.post(
+        f"{BASE_URL}/",
+        json={"owner_name": "Noah", "initial_deposit": "10"},
+    )
+    account_id2 = create_resp2.json()["id"]
+
+    # Withdraw 50: exceeds balance, should mention "insufficient funds"
+    resp_funds = await client.post(
+        f"{BASE_URL}/{account_id2}/withdraw",
+        json={"amount": "50"},
+    )
+    assert resp_funds.status_code == 400
+    assert "insufficient funds" in resp_funds.json()["detail"].lower()
+
+
+async def test_withdrawal_limit_decimal_precision(client: AsyncClient) -> None:
+    """Limit of 100.50; withdraw 100.50 succeeds, then 0.01 more fails."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Olivia",
+            "initial_deposit": "1000",
+            "daily_withdrawal_limit": "100.50",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    # Withdraw exactly 100.50 — should succeed
+    resp = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "100.50"},
+    )
+    assert resp.status_code == 200
+
+    # Withdraw 0.01 more — cumulative 100.51 > 100.50, should fail
+    resp2 = await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "0.01"},
+    )
+    assert resp2.status_code == 400
+    assert "limit" in resp2.json()["detail"].lower()
+
+
+async def test_get_withdrawal_usage(client: AsyncClient) -> None:
+    """GET withdrawal-usage returns correct usage info with limit set."""
+    create_resp = await client.post(
+        f"{BASE_URL}/",
+        json={
+            "owner_name": "Paul",
+            "initial_deposit": "1000",
+            "daily_withdrawal_limit": "500",
+        },
+    )
+    account_id = create_resp.json()["id"]
+
+    # Withdraw 200
+    await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "200"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/withdrawal-usage")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["account_id"] == account_id
+    assert Decimal(data["daily_withdrawal_limit"]) == Decimal("500")
+    assert Decimal(data["used_today"]) == Decimal("200")
+    assert Decimal(data["remaining_today"]) == Decimal("300")
+
+
+async def test_get_withdrawal_usage_no_limit(client: AsyncClient) -> None:
+    """GET withdrawal-usage with no limit returns None for limit and remaining."""
+    create_resp = await _create_account(client, owner_name="Quinn", initial_deposit="500")
+    account_id = create_resp.json()["id"]
+
+    # Withdraw 100
+    await client.post(
+        f"{BASE_URL}/{account_id}/withdraw",
+        json={"amount": "100"},
+    )
+
+    resp = await client.get(f"{BASE_URL}/{account_id}/withdrawal-usage")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["account_id"] == account_id
+    assert data["daily_withdrawal_limit"] is None
+    assert Decimal(data["used_today"]) == Decimal("100")
+    assert data["remaining_today"] is None

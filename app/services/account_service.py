@@ -20,6 +20,10 @@ class AccountFrozenError(Exception):
         super().__init__(f"Account {account_id} is frozen")
 
 
+class DailyWithdrawalLimitExceededError(Exception):
+    pass
+
+
 class AlertNotFoundError(Exception):
     def __init__(self, alert_id: UUID) -> None:
         self.alert_id = alert_id
@@ -40,7 +44,12 @@ def _get_account(account_id: UUID) -> dict:
     return account
 
 
-def create_account(owner_name: str, initial_deposit: Decimal, notes: str | None = None) -> dict:
+def create_account(
+    owner_name: str,
+    initial_deposit: Decimal,
+    notes: str | None = None,
+    daily_withdrawal_limit: Decimal | None = None,
+) -> dict:
     account_id = uuid4()
     account = {
         "id": account_id,
@@ -48,6 +57,7 @@ def create_account(owner_name: str, initial_deposit: Decimal, notes: str | None 
         "balance": initial_deposit,
         "notes": notes,
         "is_frozen": False,
+        "daily_withdrawal_limit": daily_withdrawal_limit,
         "created_at": datetime.now(timezone.utc),
     }
     with _lock:
@@ -127,10 +137,27 @@ def apply_interest(account_id: UUID, rate: Decimal) -> dict:
         return {**account, "interest_earned": interest, "rate": rate}
 
 
+def _get_today_withdrawal_total(account_id: UUID) -> Decimal:
+    """Sum all withdrawal amounts for the account on the current UTC date."""
+    today = datetime.now(timezone.utc).date()
+    return sum(
+        (txn["amount"] for txn in _transactions.get(account_id, [])
+         if txn["type"] == "withdrawal" and txn["timestamp"].date() == today),
+        Decimal("0"),
+    )
+
+
 def withdraw(account_id: UUID, amount: Decimal) -> dict:
     with _lock:
         account = _get_account(account_id)
         _check_frozen(account)
+        limit = account.get("daily_withdrawal_limit")
+        if limit is not None:
+            used_today = _get_today_withdrawal_total(account_id)
+            if used_today + amount > limit:
+                raise DailyWithdrawalLimitExceededError(
+                    f"Daily withdrawal limit of {limit} exceeded"
+                )
         if amount > account["balance"]:
             raise InsufficientFundsError("Insufficient funds")
         account["balance"] -= amount
@@ -142,6 +169,27 @@ def withdraw(account_id: UUID, amount: Decimal) -> dict:
             "timestamp": datetime.now(timezone.utc),
         })
         return account
+
+
+def update_withdrawal_limit(account_id: UUID, daily_withdrawal_limit: Decimal | None) -> dict:
+    with _lock:
+        account = _get_account(account_id)
+        account["daily_withdrawal_limit"] = daily_withdrawal_limit
+        return account
+
+
+def get_withdrawal_usage(account_id: UUID) -> dict:
+    with _lock:
+        account = _get_account(account_id)
+        used_today = _get_today_withdrawal_total(account_id)
+        limit = account.get("daily_withdrawal_limit")
+        remaining = max(Decimal("0"), limit - used_today) if limit is not None else None
+        return {
+            "account_id": account["id"],
+            "daily_withdrawal_limit": limit,
+            "used_today": used_today,
+            "remaining_today": remaining,
+        }
 
 
 def get_transactions(account_id: UUID) -> list[dict]:

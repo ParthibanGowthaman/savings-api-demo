@@ -16,12 +16,15 @@ from app.schemas.account import (
     TransactionHistoryEntry,
     TransactionRequest,
     TransactionResponse,
+    WithdrawalLimitUpdate,
+    WithdrawalUsageResponse,
 )
 from app.services import account_service
 from app.services.account_service import (
     AccountFrozenError,
     AccountNotFoundError,
     AlertNotFoundError,
+    DailyWithdrawalLimitExceededError,
     InsufficientFundsError,
 )
 
@@ -36,7 +39,7 @@ async def _call_service(func: Callable[..., Any], *args: Any) -> Any:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except AccountFrozenError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
-    except InsufficientFundsError as exc:
+    except (InsufficientFundsError, DailyWithdrawalLimitExceededError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
@@ -49,7 +52,11 @@ async def list_accounts() -> list[AccountResponse]:
 @router.post("/", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
 async def create_account(payload: AccountCreate) -> AccountResponse:
     account = await _call_service(
-        account_service.create_account, payload.owner_name, payload.initial_deposit, payload.notes
+        account_service.create_account,
+        payload.owner_name,
+        payload.initial_deposit,
+        payload.notes,
+        payload.daily_withdrawal_limit,
     )
     return AccountResponse(**account)
 
@@ -97,6 +104,22 @@ async def apply_interest(account_id: UUID, payload: InterestRequest) -> Interest
 async def withdraw(account_id: UUID, payload: TransactionRequest) -> TransactionResponse:
     account = await _call_service(account_service.withdraw, account_id, payload.amount)
     return TransactionResponse(**account, message=f"Withdrew {payload.amount}")
+
+
+@router.patch("/{account_id}/withdrawal-limit", response_model=AccountResponse)
+async def update_withdrawal_limit(
+    account_id: UUID, payload: WithdrawalLimitUpdate
+) -> AccountResponse:
+    account = await _call_service(
+        account_service.update_withdrawal_limit, account_id, payload.daily_withdrawal_limit
+    )
+    return AccountResponse(**account)
+
+
+@router.get("/{account_id}/withdrawal-usage", response_model=WithdrawalUsageResponse)
+async def get_withdrawal_usage(account_id: UUID) -> WithdrawalUsageResponse:
+    usage = await _call_service(account_service.get_withdrawal_usage, account_id)
+    return WithdrawalUsageResponse(**usage)
 
 
 @router.get("/{account_id}/transactions", response_model=list[TransactionHistoryEntry])

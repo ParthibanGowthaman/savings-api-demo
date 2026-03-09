@@ -10,6 +10,7 @@ class AccountCreate(BaseModel):
     owner_name: str = Field(..., min_length=1, max_length=100)
     initial_deposit: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     notes: str | None = Field(default=None, max_length=500)
+    daily_withdrawal_limit: Decimal | None = Field(default=None, ge=Decimal("0"))
 
 
 class AccountUpdate(BaseModel):
@@ -22,6 +23,7 @@ class AccountResponse(BaseModel):
     balance: Decimal
     notes: str | None
     is_frozen: bool
+    daily_withdrawal_limit: Decimal | None
     created_at: datetime
 
 
@@ -55,6 +57,17 @@ class TransactionHistoryEntry(BaseModel):
     amount: Decimal
     balance_after: Decimal
     timestamp: datetime
+
+
+class WithdrawalLimitUpdate(BaseModel):
+    daily_withdrawal_limit: Decimal | None = Field(default=None, ge=Decimal("0"))
+
+
+class WithdrawalUsageResponse(BaseModel):
+    account_id: UUID
+    daily_withdrawal_limit: Decimal | None
+    used_today: Decimal
+    remaining_today: Decimal | None
 
 
 class AlertCreate(BaseModel):
